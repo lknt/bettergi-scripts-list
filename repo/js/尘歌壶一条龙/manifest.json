@@ -16,5 +16,8 @@
     }
   ],
   "settings_ui": "settings.json",
+  "saved_files": [
+    "settings.json"
+  ],
   "main": "main.js"
 }
