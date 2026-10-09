@@ -21,6 +21,5 @@
   "settings_ui": "settings.json",
   "main": "main.js",
   "saved_files": [
-    "record/"
-  ]
+    "record/","settings.json"]
 }
