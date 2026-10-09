@@ -389,6 +389,10 @@ async function getUidFromGame() {
 // 确保设置变量存在（调试模式总开关：关闭时"显示详细日志"与"指定NPC和商品"均不生效）
 const debugMode = settings.debugMode || false;
 const ignoreRecords = settings.ignoreRecords || false;
+// “无视记录强制购买”为一次性勾选：运行开始即写回 false，本次运行结束后自动取消，
+if (ignoreRecords) {
+    settings.ignoreRecords = false;
+}
 const recordDebug = debugMode && (settings.recordDebug || false);
 
 // 商人名称兼容映射（旧拼写 -> 新规范名）
@@ -465,7 +469,7 @@ function parseDebugNpcFoods() {
                 result.set(currentNpc, foods);
             }
             foods.add(canonicalFoodName(token));
-        } else {
+        } else if (recordDebug) {
             log.warn(`[调试] "${token}" 不是有效商人名，已忽略`);
         }
     }
@@ -473,19 +477,21 @@ function parseDebugNpcFoods() {
     if (result.size === 0) return null;
 
     // 输出调试配置，并校验指定商品是否存在于对应商人的商品列表
-    log.info(`[调试] 已指定运行商人: ${[...result.keys()].join(", ")}`);
-    for (const [npcName, foods] of result.entries()) {
-        if (!foods) {
-            log.info(`[调试]   ${npcName}: 全部商品`);
-            continue;
+    if (recordDebug) {
+        log.info(`[调试] 已指定运行商人: ${[...result.keys()].join(", ")}`);
+        for (const [npcName, foods] of result.entries()) {
+            if (!foods) {
+                log.info(`[调试]   ${npcName}: 全部商品`);
+                continue;
+            }
+            const npc = findNpcByName(npcName);
+            const all = npc ? getAllNpcFoods(npc).map(canonicalFoodName) : [];
+            const unknown = [...foods].filter(f => !all.includes(f));
+            if (unknown.length > 0) {
+                log.warn(`[调试] 商人 ${npcName} 不存在指定商品: ${unknown.join(", ")}`);
+            }
+            log.info(`[调试]   ${npcName}: ${[...foods].join(", ")}`);
         }
-        const npc = findNpcByName(npcName);
-        const all = npc ? getAllNpcFoods(npc).map(canonicalFoodName) : [];
-        const unknown = [...foods].filter(f => !all.includes(f));
-        if (unknown.length > 0) {
-            log.warn(`[调试] 商人 ${npcName} 不存在指定商品: ${unknown.join(", ")}`);
-        }
-        log.info(`[调试]   ${npcName}: ${[...foods].join(", ")}`);
     }
     return result;
 }
@@ -1016,13 +1022,13 @@ async function selectNpcDialogOption(npcName, npcPath) {
     return selected;
 }
 
-// 在对话中点击特殊购买选项
+// ==================== NPC特殊对话选项 ====================
 // 循环OCR检测对话：找到特殊选项立即鼠标点击；选项未出现时按F推进下一句。
 async function clickShopDialogOption(maxAttempts = 6) {
     // 设置脚本环境的游戏分辨率和DPI缩放
     setGameMetrics(1920, 1080, 1);
 
-    const keywords = ["有什么卖的", "可以卖一些", "有什么喝的"];
+    const keywords = ["有什么卖的", "可以卖一些", "有什么喝的", "我想买些古董"];
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         let captureRegion = captureGameRegion();
@@ -1085,7 +1091,7 @@ async function spikChat(npcName, npcPath) {
         }
     }
 
-    if (npcName == "布纳马" || npcName == "杜拉夫" || npcName == "齐良诺夫") {
+    if (npcName == "琳琅" || npcName == "布纳马" || npcName == "杜拉夫" || npcName == "齐良诺夫") {
         // 设置脚本环境的游戏分辨率和DPI缩放
         setGameMetrics(1920, 1080, 1);
 
@@ -1291,6 +1297,14 @@ async function buyFoods(npcName, npcRecords, currentPeriod) {
             }
 
             let resList = captureRegion.FindMulti(ro);
+            // 截图漏检，等待后重新截图再查找，最多尝试 3 次
+            for (let findAttempt = 1; findAttempt < 3 && resList.count === 0; findAttempt++) {
+                if (recordDebug) log.info(`[调试] 本次截图未找到 "${item}"，等待后重新截图查找（第 ${findAttempt} 次）`);
+                await sleep(1000);
+                captureRegion.dispose();
+                captureRegion = captureGameRegion();
+                resList = captureRegion.FindMulti(ro);
+            }
 
             for (let res of resList) {
                 if (recordDebug) {
@@ -1363,6 +1377,11 @@ async function buyFoods(npcName, npcRecords, currentPeriod) {
             }
         }
     }
+    
+    // 提示本次未能购买的商品
+    if (tempFoods.length > 0) {
+        log.warn(`${displayName} 以下商品本次未能购买，下次运行将自动重试: ${tempFoods.join(", ")}`);
+    }
 
     if (purchasedFoods.length > 0) {
         log.info(`${displayName} 购买完成，已购买: ${purchasedFoods.join(", ")}`);
@@ -1430,6 +1449,51 @@ async function initNpcData(records) {
     }
 }
 
+// ==================== 商品预设 ====================
+// 预设由脚本目录下的“预设工具.html”维护，全局共享（与具体账户无关）；
+// 预设记录文件存放在 record/ 下
+const PRESET_FILE = "record/presets.json";
+
+async function loadPresets() {
+    try {
+        const content = await file.readText(PRESET_FILE);
+        const data = JSON.parse(content);
+        return (data && typeof data === "object" && !Array.isArray(data)) ? data : {};
+    } catch (e) {
+        // 文件不存在或内容损坏时，按"无预设"处理
+        return {};
+    }
+}
+
+function logPresetList(presets) {
+    const names = Object.keys(presets);
+    if (names.length === 0) {
+        log.warn("当前没有已保存的商品预设");
+        return;
+    }
+    log.warn(`可用的商品预设（共 ${names.length} 个）: ${names.join(", ")}`);
+}
+
+// settings.preset 选中预设时，读取该预设的商品组合覆盖商品栏；预设失效时回退为按商品栏购买
+async function applyPreset() {
+    const presetName = (settings.preset || "").trim();
+    if (!presetName || presetName === "不使用预设") return true;
+
+    const presets = await loadPresets();
+    const preset = presets[presetName];
+    if (!preset || !preset.foods) {
+        // 下拉栏残留的失效值（如预设已在工具中删除、清空 presets.json 后旧选择未复位）：
+        // 不终止运行，警告后回退为按商品栏购买，并复位下拉栏避免一直显示为空
+        log.warn(`商品预设 "${presetName}" 不存在（可能已在预设工具中删除），本次将按商品栏购买`);
+        logPresetList(presets);
+        settings.preset = "不使用预设";
+        return true;
+    }
+    settings.foodsToBuy = preset.foods;
+    log.info(`使用商品预设 "${presetName}": ${preset.foods}`);
+    return true;
+}
+
 (async function () {
     // 重置容量限制集合
     capacityLimitedFoods.clear();
@@ -1464,6 +1528,9 @@ async function initNpcData(records) {
         }
 
         log.info(`当前账户: ${userName}`);
+
+        // ==================== 商品预设：选中预设时用其商品组合覆盖商品栏（失效则回退商品栏） ====================
+        await applyPreset();
 
         // ==================== 加载外部数据 ====================
         if (!await loadExternalData()) {
