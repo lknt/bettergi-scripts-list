@@ -24,6 +24,5 @@
     "local/harvest_stats.json",
     "local/harvest_stats.bak.json",
     "local/harvest_report.txt",
-    "local/harvest_report.html"
-  ]
+    "local/harvest_report.html","settings.json"]
 }

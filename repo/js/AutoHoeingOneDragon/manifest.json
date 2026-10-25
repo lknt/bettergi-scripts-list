@@ -26,6 +26,5 @@
     "pathing/0-保留/*.json",
     "pathing/0-保留/*/*.json",
     "pathing/0-保留/*/*/*.json",
-    "pathing/0-保留/*/*/*/*.json"
-  ]
+    "pathing/0-保留/*/*/*/*.json","settings.json"]
 }
