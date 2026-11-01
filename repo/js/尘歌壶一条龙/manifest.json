@@ -15,6 +15,9 @@
       "links": "https://github.com/this-Fish"
     }
   ],
+"saved_files": [
+      "settings.json"
+  ],
   "settings_ui": "settings.json",
   "main": "main.js"
 }
